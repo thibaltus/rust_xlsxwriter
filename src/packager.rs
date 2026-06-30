@@ -44,7 +44,10 @@ use std::collections::HashSet;
 use std::io::{Seek, Write};
 
 #[cfg(feature = "constant_memory")]
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
+
+#[cfg(feature = "constant_memory")]
+use zip::write::StreamWriter;
 
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,21 +77,40 @@ use crate::workbook::Workbook;
 use crate::worksheet::Worksheet;
 use crate::{xmlwriter, Comment, DocProperties, Visible, NUM_IMAGE_FORMATS};
 
+// Wrap writer trait implementation constraint.
+#[cfg(not(feature = "constant_memory"))]
+pub trait WriterBound: Write + Seek + Send {}
+#[cfg(not(feature = "constant_memory"))]
+impl<T: Write + Seek + Send> WriterBound for T {}
+
+#[cfg(feature = "constant_memory")]
+pub trait WriterBound: Write {}
+#[cfg(feature = "constant_memory")]
+impl<T: Write + Send> WriterBound for T {}
+
 // Packager struct to assemble the xlsx file.
-pub struct Packager<W: Write + Seek> {
+pub struct Packager<W: WriterBound> {
+    #[cfg(not(feature = "constant_memory"))]
     zip: ZipWriter<W>,
+    #[cfg(feature = "constant_memory")]
+    zip: ZipWriter<StreamWriter<W>>,
+
     zip_options: SimpleFileOptions,
     zip_options_for_binary_files: SimpleFileOptions,
 }
 
-impl<W: Write + Seek + Send> Packager<W> {
+impl<W: WriterBound> Packager<W> {
     // -----------------------------------------------------------------------
     // Crate public methods.
     // -----------------------------------------------------------------------
 
     // Create a new Packager struct.
     pub(crate) fn new(writer: W, use_large_file: bool) -> Packager<W> {
+        #[cfg(not(feature = "constant_memory"))]
         let zip = zip::ZipWriter::new(writer);
+
+        #[cfg(feature = "constant_memory")]
+        let zip = zip::ZipWriter::new_stream(writer);
 
         let zip_options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
@@ -456,18 +478,9 @@ impl<W: Write + Seek + Send> Packager<W> {
                 // Section 2. On disk cell data.
                 // We also need to flush the last remaining row.
                 worksheet.flush_last_row();
-
                 worksheet.file_writer.rewind().unwrap();
                 let mut reader = BufReader::new(worksheet.file_writer.get_ref());
-                loop {
-                    let buffer = reader.fill_buf().unwrap();
-                    let length = buffer.len();
-                    if length == 0 {
-                        break;
-                    }
-                    self.zip.write_all(buffer).unwrap();
-                    reader.consume(length);
-                }
+                std::io::copy(&mut reader, &mut self.zip)?;
             }
 
             // Section 3. In memory metadata at end of the file.

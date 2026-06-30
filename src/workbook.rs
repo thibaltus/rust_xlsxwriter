@@ -219,7 +219,7 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{read_to_string, File};
-use std::io::{BufReader, Cursor, Read, Seek, Write};
+use std::io::{BufReader, Cursor, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use zip::ZipArchive;
@@ -238,6 +238,7 @@ use crate::feature_property_bag::FeaturePropertyBagTypes;
 use crate::format::Format;
 use crate::packager::Packager;
 use crate::packager::PackagerOptions;
+use crate::packager::WriterBound;
 use crate::shared_strings_table::SharedStringsTable;
 use crate::theme::{THEME_XML_2007, THEME_XML_2023};
 use crate::worksheet::Worksheet;
@@ -1379,12 +1380,12 @@ impl Workbook {
     ///
     /// The workbook `save_to_writer()` method is similar to the
     /// [`Workbook::save()`] method except that it writes the xlsx file to types
-    /// that implement the [`Write`] trait such as the [`std::fs::File`] type or
+    /// that implement the [`std::io::Write`] trait such as the [`std::fs::File`] type or
     /// buffers.
     ///
     /// # Parameters
     ///
-    /// - `writer`: An object that implements the [`Write`] trait.
+    /// - `writer`: An object that implements the [`std::io::Write`] trait.
     ///
     /// # Errors
     ///
@@ -1433,7 +1434,7 @@ impl Workbook {
     ///
     pub fn save_to_writer<W>(&mut self, writer: W) -> Result<(), XlsxError>
     where
-        W: Write + Seek + Send,
+        W: WriterBound,
     {
         self.save_internal(writer)?;
         Ok(())
@@ -2442,7 +2443,7 @@ impl Workbook {
     // writing to the xlsx file.
     #[allow(clippy::similar_names)]
     #[allow(clippy::too_many_lines)]
-    fn save_internal<W: Write + Seek + Send>(&mut self, writer: W) -> Result<(), XlsxError> {
+    fn save_internal<W: WriterBound>(&mut self, writer: W) -> Result<(), XlsxError> {
         // Reset workbook and worksheet state data between saves.
         self.reset();
 
