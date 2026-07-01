@@ -41,17 +41,17 @@
 // the package and writes them into the xlsx file.
 
 use std::collections::HashSet;
-use std::io::{Seek, Write};
+use std::io::Write;
 
 #[cfg(feature = "constant_memory")]
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
 use zip::write::SimpleFileOptions;
-use zip::{DateTime, ZipWriter};
+use zip::{DateTime, ZipWriter, write::{StreamWriter}};
 
 use crate::app::App;
 use crate::content_types::ContentTypes;
@@ -75,20 +75,20 @@ use crate::worksheet::Worksheet;
 use crate::{xmlwriter, Comment, DocProperties, Visible, NUM_IMAGE_FORMATS};
 
 // Packager struct to assemble the xlsx file.
-pub struct Packager<W: Write + Seek> {
-    zip: ZipWriter<W>,
+pub struct Packager<W: Write + Send> {
+    zip: ZipWriter<StreamWriter<W>>,
     zip_options: SimpleFileOptions,
     zip_options_for_binary_files: SimpleFileOptions,
 }
 
-impl<W: Write + Seek + Send> Packager<W> {
+impl<W: Write + Send> Packager<W> {
     // -----------------------------------------------------------------------
     // Crate public methods.
     // -----------------------------------------------------------------------
 
     // Create a new Packager struct.
     pub(crate) fn new(writer: W, use_large_file: bool) -> Packager<W> {
-        let zip = zip::ZipWriter::new(writer);
+        let zip = zip::ZipWriter::new_stream(writer);
 
         let zip_options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
@@ -456,18 +456,9 @@ impl<W: Write + Seek + Send> Packager<W> {
                 // Section 2. On disk cell data.
                 // We also need to flush the last remaining row.
                 worksheet.flush_last_row();
-
                 worksheet.file_writer.rewind().unwrap();
                 let mut reader = BufReader::new(worksheet.file_writer.get_ref());
-                loop {
-                    let buffer = reader.fill_buf().unwrap();
-                    let length = buffer.len();
-                    if length == 0 {
-                        break;
-                    }
-                    self.zip.write_all(buffer).unwrap();
-                    reader.consume(length);
-                }
+                std::io::copy(&mut reader, &mut self.zip)?;
             }
 
             // Section 3. In memory metadata at end of the file.
